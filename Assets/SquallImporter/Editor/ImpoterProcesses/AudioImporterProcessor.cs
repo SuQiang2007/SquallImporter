@@ -8,15 +8,17 @@ namespace SquallImporter
 {
     public class AudioImporterProcessor : AssetPostprocessor
     {
+        private const string ConfigPath = "Assets/SquallImporter/AudioImportConfig.asset";
         //BG Use CompressedInMemory, otherwise DecompressOnLoad
         private void OnPostprocessAudio(AudioClip arg)
         {
             // 在这里读取AudioImporterConfig.so中的内容
             // 假设AudioImporterConfig.so是一个ScriptableObject，路径为"Assets/AudioImporterConfig.so"
-            AudioImportConfig config = AssetDatabase.LoadAssetAtPath<AudioImportConfig>("Assets/AudioImporterConfig.so");
+            AudioImportConfig config = AssetDatabase.LoadAssetAtPath<AudioImportConfig>(ConfigPath);
             var importer = AssetImporter.GetAtPath(assetPath) as AudioImporter;
-        
-            if(CheckConfig(config, importer) || CheckFileNameHead(config) || CheckFileNameIllegal(config))
+
+            if (!CheckConfig(config, importer)|| !CheckFileNameIllegal(config) || !CheckFileNameHead(config)  ||
+                !CheckFileNameMatchPath(config))
             {
                 DeleteThisImport();
                 return;
@@ -43,6 +45,7 @@ namespace SquallImporter
 
         private bool CheckConfig(AudioImportConfig config, AudioImporter importer)
         {
+            Debug.LogError("111");
             if (config == null || importer == null)
             {
                 EditorUtility.DisplayDialog(
@@ -53,10 +56,10 @@ namespace SquallImporter
                     $"资源路径: {assetPath}", 
                     "确定"
                 );
-                return true;
+                return false;
             }
 
-            return false;
+            return true;
         }
 
         private void DeleteThisImport()
@@ -69,8 +72,9 @@ namespace SquallImporter
             }
         }
 
-        private bool CheckFileNameIllegal(AudioImportConfig config)
+        private bool CheckFileNameMatchPath(AudioImportConfig config)
         {
+            Debug.LogError("4445");
             // 检查音频文件名是否符合config中的正则表达式
             if (config != null && !string.IsNullOrEmpty(config.audioNamePattern))
             {
@@ -85,21 +89,34 @@ namespace SquallImporter
                         $"应匹配正则: {config.audioNamePattern}",
                         "确定"
                     );
-                    Debug.LogWarning(
-                        $"[AudioImporterProcessor] 音频文件名不符合命名规范: \n" +
-                        $"assetPath: {assetPath}\n" +
-                        $"fileName: {fileName}\n" +
-                        $"pattern: {config.audioNamePattern}"
-                    );
-                    return true;
+                    return false;
                 }
             }
 
-            return false;
+            return true;
+        }
+
+        private bool CheckFileNameIllegal(AudioImportConfig config)
+        {
+            // 通过 assetPath 取到文件名（不带扩展名）
+            var fileName = Path.GetFileNameWithoutExtension(assetPath);
+            if (!IsFileNameIllegal(fileName, config.audioNamePattern))
+            {
+                EditorUtility.DisplayDialog(
+                    "文件名不合规",
+                    $"文件名{fileName}不合规，请按蛇形命名法命名资源，且文件名至少由3部分组成" +
+                    $"期望文件名格式举例：bgm_city1_happymusic",
+                    "确定"
+                );
+                return false;
+            }
+
+            return true;
         }
 
         private bool CheckFileNameHead(AudioImportConfig config)
         {
+            Debug.LogError("222");
             string head = GetHead(assetPath, config.audioNamePattern);
             // 获取当前audioclip的父文件夹名字
             string parentFolderName = null;
@@ -121,16 +138,10 @@ namespace SquallImporter
                     $"请确保音频文件的父文件夹名与文件名的类型前缀一致。",
                     "确定"
                 );
-                Debug.LogWarning(
-                    $"[AudioImporterProcessor] 文件名与存放路径不匹配: \n" +
-                    $"assetPath: {assetPath}\n" +
-                    $"parentFolderName: {parentFolderName}\n" +
-                    $"head(from name): {head}"
-                );
-                return true;
+                return false;
             }
 
-            return false;
+            return true;
         }
 
         private string GetHead(string fileName, string pattern)
@@ -141,6 +152,12 @@ namespace SquallImporter
             if (!match.Success) return null;
             // 2. 提取第一部分
             return match.Groups[1].Value;
+        }
+
+        private bool IsFileNameIllegal(string fileName, string pattern)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(fileName, pattern);
+            return match.Success;
         }
     }
 }

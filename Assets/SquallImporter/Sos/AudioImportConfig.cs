@@ -11,7 +11,9 @@ namespace SquallImporter
         public string audioRootPath;
         [Tooltip("音效类型，每一个音效类型会对应一个存储路径")]
         public string[] nameHeads;
-        public string audioNamePattern = @"^([a-z]+)_[a-z]+_[a-z]+(?:_[a-z]+)*$";
+        
+        [HideInInspector]
+        public string audioNamePattern = @"^[a-z]+_(?:[a-z0-9]+_)+[a-z0-9]+$";
 
         public void ApplyToAll()
         {
