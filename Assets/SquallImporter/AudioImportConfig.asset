@@ -12,6 +12,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 175c72a1d3d2374489210fe88efe99b1, type: 3}
   m_Name: AudioImportConfig
   m_EditorClassIdentifier: 
-  audioRootPath: TestImporter/Audio
+  audioRootPath: TestFolders/Audios
   nameHeads:
   - bgm
+  - sound
+  audioNamePattern: ^([a-z]+)_[a-z]+_[a-z]+(?:_[a-z]+)*$
