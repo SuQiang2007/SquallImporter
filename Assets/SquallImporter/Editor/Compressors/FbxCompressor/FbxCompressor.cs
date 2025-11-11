@@ -11,6 +11,7 @@ public class FbxCompressor : EditorWindow
 
     private bool readWriteEnabled = false;
     private ModelImporterMeshCompression meshCompression = ModelImporterMeshCompression.Medium;
+    private bool verboseLogging = false;
 
     [MenuItem("Tools/SquallTools/Optimise/FBX Compressor")]
     public static void ShowWindow()
@@ -68,6 +69,7 @@ public class FbxCompressor : EditorWindow
         EditorGUILayout.LabelField("Settings", EditorStyles.boldLabel);
         readWriteEnabled = EditorGUILayout.Toggle("Read/Write Enabled", readWriteEnabled);
         meshCompression = (ModelImporterMeshCompression)EditorGUILayout.EnumPopup("Mesh Compression", meshCompression);
+        verboseLogging = EditorGUILayout.Toggle("Verbose Logging", verboseLogging);
 
         EditorGUILayout.Space(4);
         using (new EditorGUI.DisabledScope(foundFbxAssetPaths.Count == 0))
@@ -145,12 +147,17 @@ public class FbxCompressor : EditorWindow
             return;
         }
 
+        var errorSummaries = new List<string>();
+
         try
         {
             AssetDatabase.StartAssetEditing();
             int modified = 0;
-            foreach (var path in foundFbxAssetPaths)
+            for (int i = 0; i < foundFbxAssetPaths.Count; i++)
             {
+                var path = foundFbxAssetPaths[i];
+                EditorUtility.DisplayProgressBar("Applying FBX Settings", path, (float)(i + 1) / foundFbxAssetPaths.Count);
+
                 var importer = AssetImporter.GetAtPath(path) as ModelImporter;
                 if (importer == null)
                 {
@@ -158,6 +165,15 @@ public class FbxCompressor : EditorWindow
                 }
 
                 bool changed = false;
+                var prevReadable = importer.isReadable;
+                var prevCompression = importer.meshCompression;
+
+                if (verboseLogging)
+                {
+                    string guid = AssetDatabase.AssetPathToGUID(path);
+                    Debug.Log($"[FbxCompressor] Preparing import\n- Path: {path}\n- GUID: {guid}\n- Prev Read/Write: {prevReadable}\n- Prev Compression: {prevCompression}\n- Target Read/Write: {readWriteEnabled}\n- Target Compression: {meshCompression}");
+                }
+
                 if (importer.isReadable != readWriteEnabled)
                 {
                     importer.isReadable = readWriteEnabled;
@@ -171,12 +187,34 @@ public class FbxCompressor : EditorWindow
 
                 if (changed)
                 {
-                    importer.SaveAndReimport();
-                    modified++;
+                    try
+                    {
+                        importer.SaveAndReimport();
+                        modified++;
+                        if (verboseLogging)
+                        {
+                            Debug.Log($"[FbxCompressor] Applied settings OK: {path}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        string guid = AssetDatabase.AssetPathToGUID(path);
+                        string scan = ScanAssetForNaNInfo(path);
+                        string msg = $"[FbxCompressor] ERROR reimporting FBX\n- Path: {path}\n- GUID: {guid}\n- Prev Read/Write: {prevReadable}\n- Prev Compression: {prevCompression}\n- Target Read/Write: {readWriteEnabled}\n- Target Compression: {meshCompression}\n- Exception: {ex}\n- NaN Scan: {scan}";
+                        Debug.LogError(msg);
+                        errorSummaries.Add($"Path: {path}\nReason: {ex.Message}");
+                    }
                 }
             }
 
-            EditorUtility.DisplayDialog("Done", $"Applied settings to {modified} FBX asset(s).", "OK");
+            if (errorSummaries.Count > 0)
+            {
+                EditorUtility.DisplayDialog("Done with Errors", $"Applied settings to {modified} FBX asset(s).\nErrors: {errorSummaries.Count}\nSee Console for details.", "OK");
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("Done", $"Applied settings to {modified} FBX asset(s).", "OK");
+            }
         }
         catch (Exception e)
         {
@@ -184,7 +222,71 @@ public class FbxCompressor : EditorWindow
         }
         finally
         {
+            EditorUtility.ClearProgressBar();
             AssetDatabase.StopAssetEditing();
         }
+    }
+
+    private string ScanAssetForNaNInfo(string assetPath)
+    {
+        try
+        {
+            var go = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+            if (go == null)
+            {
+                return "GameObject not loadable for scan.";
+            }
+
+            var results = new List<string>();
+            var transforms = go.GetComponentsInChildren<Transform>(true);
+            int reported = 0;
+            foreach (var t in transforms)
+            {
+                if (TransformHasNaN(t))
+                {
+                    results.Add(GetTransformPath(t));
+                    reported++;
+                    if (reported >= 10)
+                    {
+                        results.Add("... (truncated)");
+                        break;
+                    }
+                }
+            }
+
+            if (results.Count == 0)
+            {
+                return "No NaN found in Transform local values (current imported state).";
+            }
+
+            return "NaN Transforms: " + string.Join(" | ", results);
+        }
+        catch (Exception ex)
+        {
+            return $"Scan failed: {ex.Message}";
+        }
+    }
+
+    private bool TransformHasNaN(Transform t)
+    {
+        Vector3 lp = t.localPosition;
+        Quaternion lr = t.localRotation;
+        Vector3 ls = t.localScale;
+        return float.IsNaN(lp.x) || float.IsNaN(lp.y) || float.IsNaN(lp.z)
+            || float.IsNaN(lr.x) || float.IsNaN(lr.y) || float.IsNaN(lr.z) || float.IsNaN(lr.w)
+            || float.IsNaN(ls.x) || float.IsNaN(ls.y) || float.IsNaN(ls.z);
+    }
+
+    private string GetTransformPath(Transform t)
+    {
+        var parts = new System.Collections.Generic.List<string>();
+        var cur = t;
+        while (cur != null)
+        {
+            parts.Add(cur.name);
+            cur = cur.parent;
+        }
+        parts.Reverse();
+        return string.Join("/", parts);
     }
 }
