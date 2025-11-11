@@ -12,7 +12,7 @@ public class FbxCompressor : EditorWindow
     private bool readWriteEnabled = false;
     private ModelImporterMeshCompression meshCompression = ModelImporterMeshCompression.Medium;
 
-    [MenuItem("Tools/Fbx Compressor")]
+    [MenuItem("Tools/SquallTools/Optimise/FBX Compressor")]
     public static void ShowWindow()
     {
         var window = GetWindow<FbxCompressor>();
