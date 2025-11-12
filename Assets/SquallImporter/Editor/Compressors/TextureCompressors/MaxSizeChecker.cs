@@ -10,6 +10,7 @@ public class MaxSizeChecker : EditorWindow
     private DefaultAsset searchFolder = null;
     private readonly List<TextureListItem> foundTextures = new List<TextureListItem>();
     private readonly HashSet<string> selectedPaths = new HashSet<string>();
+    private readonly List<DefaultAsset> excludedFolders = new List<DefaultAsset>();
     private Vector2 scrollPosition;
     
     // Virtual scrolling optimization
@@ -51,6 +52,41 @@ public class MaxSizeChecker : EditorWindow
             if (GUILayout.Button("Search", GUILayout.Width(120)))
             {
                 FindTexturesWithLargeMaxSize();
+            }
+        }
+
+        EditorGUILayout.Space(8);
+        EditorGUILayout.LabelField("Excluded Folders", EditorStyles.boldLabel);
+        using (new EditorGUILayout.VerticalScope(GUI.skin.box))
+        {
+            for (int i = 0; i < excludedFolders.Count; i++)
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    excludedFolders[i] = (DefaultAsset)EditorGUILayout.ObjectField($"Exclude {i + 1}", excludedFolders[i], typeof(DefaultAsset), false);
+                    if (GUILayout.Button("Remove", GUILayout.Width(70)))
+                    {
+                        excludedFolders.RemoveAt(i);
+                        i--;
+                        continue;
+                    }
+                }
+
+                // Optional validation message
+                var excludedPath = excludedFolders.ElementAtOrDefault(i) != null ? AssetDatabase.GetAssetPath(excludedFolders[i]) : string.Empty;
+                if (!string.IsNullOrEmpty(excludedPath) && !AssetDatabase.IsValidFolder(excludedPath))
+                {
+                    EditorGUILayout.HelpBox("Not a valid folder. Select a folder from the Project window.", MessageType.Warning);
+                }
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button("Add Exclusion", GUILayout.Width(140)))
+                {
+                    excludedFolders.Add(null);
+                }
             }
         }
 
@@ -203,10 +239,45 @@ public class MaxSizeChecker : EditorWindow
             int totalCount = guids.Length;
             int currentIndex = 0;
 
+            // Prepare excluded folder paths
+            var excludedPaths = new List<string>();
+            foreach (var excluded in excludedFolders)
+            {
+                if (excluded == null)
+                {
+                    continue;
+                }
+
+                var path = AssetDatabase.GetAssetPath(excluded);
+                if (!string.IsNullOrEmpty(path) && AssetDatabase.IsValidFolder(path))
+                {
+                    var normalized = path.Replace("\\", "/").TrimEnd('/');
+                    excludedPaths.Add(normalized);
+                }
+            }
+
             foreach (var guid in guids)
             {
                 currentIndex++;
                 var path = AssetDatabase.GUIDToAssetPath(guid);
+
+                // Skip excluded folders
+                var normalizedPath = path.Replace("\\", "/");
+                bool isExcluded = false;
+                foreach (var excludedPath in excludedPaths)
+                {
+                    if (normalizedPath.Equals(excludedPath, StringComparison.OrdinalIgnoreCase) ||
+                        normalizedPath.StartsWith(excludedPath + "/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        isExcluded = true;
+                        break;
+                    }
+                }
+
+                if (isExcluded)
+                {
+                    continue;
+                }
                 
                 float progress = (float)currentIndex / totalCount;
                 string progressText = $"Checking: {path} ({currentIndex}/{totalCount})";
