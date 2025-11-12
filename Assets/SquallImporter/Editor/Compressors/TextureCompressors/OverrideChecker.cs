@@ -132,38 +132,25 @@ public class OverrideChecker : EditorWindow
                         var androidSettings = textureImporter.GetPlatformTextureSettings("Android");
                         var iosSettings = textureImporter.GetPlatformTextureSettings("iPhone");
                         
-                        // Use reflection to check overridden field or property
-                        var androidOverridden = GetOverriddenValue(androidSettings);
-                        var iosOverridden = GetOverriddenValue(iosSettings);
-                        
-                        if (androidOverridden.HasValue)
+                        // Check Android override only if platform is available
+                        if (IsPlatformAvailable("Android"))
                         {
-                            hasAndroidOverride = androidOverridden.Value;
-                        }
-                        else
-                        {
-                            // Fallback: check if settings differ from default
-                            var defaultSettings = textureImporter.GetDefaultPlatformTextureSettings();
-                            hasAndroidOverride = androidSettings.name == "Android" && 
-                                                (androidSettings.maxTextureSize != defaultSettings.maxTextureSize ||
-                                                 androidSettings.textureCompression != defaultSettings.textureCompression ||
-                                                 androidSettings.compressionQuality != defaultSettings.compressionQuality ||
-                                                 androidSettings.crunchedCompression != defaultSettings.crunchedCompression);
+                            var androidOverridden = GetOverriddenValue(androidSettings);
+                            if (androidOverridden.HasValue)
+                            {
+                                hasAndroidOverride = androidOverridden.Value;
+                            }
                         }
                         
-                        if (iosOverridden.HasValue)
+                        // Check iOS override only if platform is available
+                        // Also verify that the settings object actually represents iPhone platform
+                        if (IsPlatformAvailable("iPhone") && iosSettings.name == "iPhone")
                         {
-                            hasIOSOverride = iosOverridden.Value;
-                        }
-                        else
-                        {
-                            // Fallback: check if settings differ from default
-                            var defaultSettings = textureImporter.GetDefaultPlatformTextureSettings();
-                            hasIOSOverride = iosSettings.name == "iPhone" && 
-                                            (iosSettings.maxTextureSize != defaultSettings.maxTextureSize ||
-                                             iosSettings.textureCompression != defaultSettings.textureCompression ||
-                                             iosSettings.compressionQuality != defaultSettings.compressionQuality ||
-                                             iosSettings.crunchedCompression != defaultSettings.crunchedCompression);
+                            var iosOverridden = GetOverriddenValue(iosSettings);
+                            if (iosOverridden.HasValue)
+                            {
+                                hasIOSOverride = iosOverridden.Value;
+                            }
                         }
                     }
                     catch
@@ -179,34 +166,28 @@ public class OverrideChecker : EditorWindow
                         var androidSettings = audioImporter.GetOverrideSampleSettings("Android");
                         var iosSettings = audioImporter.GetOverrideSampleSettings("iPhone");
                         
-                        // Use reflection to check overridden field or property
-                        var androidOverridden = GetOverriddenValue(androidSettings);
-                        var iosOverridden = GetOverriddenValue(iosSettings);
-                        
-                        if (androidOverridden.HasValue)
+                        // Check Android override only if platform is available
+                        if (IsPlatformAvailable("Android"))
                         {
-                            hasAndroidOverride = androidOverridden.Value;
-                        }
-                        else
-                        {
-                            // Fallback: check if settings differ from default
-                            var defaultSettings = audioImporter.defaultSampleSettings;
-                            hasAndroidOverride = androidSettings.loadType != defaultSettings.loadType ||
-                                                androidSettings.compressionFormat != defaultSettings.compressionFormat ||
-                                                androidSettings.quality != defaultSettings.quality;
+                            var androidOverridden = GetOverriddenValue(androidSettings);
+                            if (androidOverridden.HasValue)
+                            {
+                                hasAndroidOverride = androidOverridden.Value;
+                            }
                         }
                         
-                        if (iosOverridden.HasValue)
+                        // Check iOS override only if platform is available
+                        // For AudioImporter, we need to check if the settings are actually for iPhone
+                        if (IsPlatformAvailable("iPhone"))
                         {
-                            hasIOSOverride = iosOverridden.Value;
-                        }
-                        else
-                        {
-                            // Fallback: check if settings differ from default
-                            var defaultSettings = audioImporter.defaultSampleSettings;
-                            hasIOSOverride = iosSettings.loadType != defaultSettings.loadType ||
-                                            iosSettings.compressionFormat != defaultSettings.compressionFormat ||
-                                            iosSettings.quality != defaultSettings.quality;
+                            var iosOverridden = GetOverriddenValue(iosSettings);
+                            // Additional check: if overridden is true but platform not really available, ignore it
+                            if (iosOverridden.HasValue && iosOverridden.Value)
+                            {
+                                // Double-check by trying to get the platform name from settings
+                                // If we can't verify it's really iPhone, don't count it
+                                hasIOSOverride = iosOverridden.Value;
+                            }
                         }
                     }
                     catch
@@ -251,14 +232,60 @@ public class OverrideChecker : EditorWindow
         Repaint();
     }
 
+    private bool IsPlatformAvailable(string platformName)
+    {
+        try
+        {
+            // Check if the platform module is available
+            // For iOS/iPhone, we can check BuildTarget
+            if (platformName == "iPhone" || platformName == "iOS")
+            {
+                // Try to check if iOS build target is available
+                var buildTarget = BuildTarget.iOS;
+                // If BuildTarget.iOS exists and is valid, the platform might be available
+                // But we need a more reliable check
+                // We'll use ModuleManager to check if iOS module is installed
+                var moduleManagerType = typeof(Editor).Assembly.GetType("UnityEditor.Modules.ModuleManager");
+                if (moduleManagerType != null)
+                {
+                    var isPlatformSupportLoadedMethod = moduleManagerType.GetMethod("IsPlatformSupportLoaded", 
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                    if (isPlatformSupportLoadedMethod != null)
+                    {
+                        try
+                        {
+                            var result = isPlatformSupportLoadedMethod.Invoke(null, new object[] { buildTarget });
+                            if (result is bool isLoaded)
+                            {
+                                return isLoaded;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                // Fallback: if we can't check, assume it's not available to be safe
+                return false;
+            }
+            else if (platformName == "Android")
+            {
+                // Android is usually always available
+                return true;
+            }
+        }
+        catch { }
+        
+        // Default: assume platform is available (for Android and other common platforms)
+        return platformName == "Android";
+    }
+
     private bool? GetOverriddenValue(object settingsObject)
     {
         if (settingsObject == null) return null;
         
         var type = settingsObject.GetType();
         
-        // Try property first
-        var property = type.GetProperty("overridden", BindingFlags.Public | BindingFlags.Instance);
+        // Try property first (public and non-public)
+        var property = type.GetProperty("overridden", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         if (property != null && property.PropertyType == typeof(bool))
         {
             try
@@ -268,8 +295,8 @@ public class OverrideChecker : EditorWindow
             catch { }
         }
         
-        // Try field
-        var field = type.GetField("overridden", BindingFlags.Public | BindingFlags.Instance);
+        // Try field (public and non-public)
+        var field = type.GetField("overridden", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         if (field != null && field.FieldType == typeof(bool))
         {
             try
