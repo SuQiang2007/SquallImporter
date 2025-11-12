@@ -92,134 +92,160 @@ public class OverrideChecker : EditorWindow
             return;
         }
 
-        // Get all asset GUIDs in the folder
-        var guids = AssetDatabase.FindAssets(string.Empty, new[] { folderPath });
-        foreach (var guid in guids)
+        try
         {
-            var path = AssetDatabase.GUIDToAssetPath(guid);
-            if (AssetDatabase.IsValidFolder(path))
-            {
-                continue; // Skip folders
-            }
+            // Get all asset GUIDs in the folder
+            EditorUtility.DisplayProgressBar("Searching Assets", "Scanning folder...", 0f);
+            var guids = AssetDatabase.FindAssets(string.Empty, new[] { folderPath });
+            int totalCount = guids.Length;
+            int currentIndex = 0;
 
-            var importer = AssetImporter.GetAtPath(path);
-            if (importer == null)
+            foreach (var guid in guids)
             {
-                continue;
-            }
+                currentIndex++;
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                
+                // Update progress bar
+                float progress = (float)currentIndex / totalCount;
+                string progressText = $"Checking: {path} ({currentIndex}/{totalCount})";
+                EditorUtility.DisplayProgressBar("Searching Assets", progressText, progress);
 
-            bool hasAndroidOverride = false;
-            bool hasIOSOverride = false;
-
-            // Check TextureImporter
-            if (importer is TextureImporter textureImporter)
-            {
-                try
+                if (AssetDatabase.IsValidFolder(path))
                 {
-                    var androidSettings = textureImporter.GetPlatformTextureSettings("Android");
-                    var iosSettings = textureImporter.GetPlatformTextureSettings("iPhone");
-                    
-                    // Use reflection to check overridden field or property
-                    var androidOverridden = GetOverriddenValue(androidSettings);
-                    var iosOverridden = GetOverriddenValue(iosSettings);
-                    
-                    if (androidOverridden.HasValue)
+                    continue; // Skip folders
+                }
+
+                var importer = AssetImporter.GetAtPath(path);
+                if (importer == null)
+                {
+                    continue;
+                }
+
+                bool hasAndroidOverride = false;
+                bool hasIOSOverride = false;
+
+                // Check TextureImporter
+                if (importer is TextureImporter textureImporter)
+                {
+                    try
                     {
-                        hasAndroidOverride = androidOverridden.Value;
+                        var androidSettings = textureImporter.GetPlatformTextureSettings("Android");
+                        var iosSettings = textureImporter.GetPlatformTextureSettings("iPhone");
+                        
+                        // Use reflection to check overridden field or property
+                        var androidOverridden = GetOverriddenValue(androidSettings);
+                        var iosOverridden = GetOverriddenValue(iosSettings);
+                        
+                        if (androidOverridden.HasValue)
+                        {
+                            hasAndroidOverride = androidOverridden.Value;
+                        }
+                        else
+                        {
+                            // Fallback: check if settings differ from default
+                            var defaultSettings = textureImporter.GetDefaultPlatformTextureSettings();
+                            hasAndroidOverride = androidSettings.name == "Android" && 
+                                                (androidSettings.maxTextureSize != defaultSettings.maxTextureSize ||
+                                                 androidSettings.textureCompression != defaultSettings.textureCompression ||
+                                                 androidSettings.compressionQuality != defaultSettings.compressionQuality ||
+                                                 androidSettings.crunchedCompression != defaultSettings.crunchedCompression);
+                        }
+                        
+                        if (iosOverridden.HasValue)
+                        {
+                            hasIOSOverride = iosOverridden.Value;
+                        }
+                        else
+                        {
+                            // Fallback: check if settings differ from default
+                            var defaultSettings = textureImporter.GetDefaultPlatformTextureSettings();
+                            hasIOSOverride = iosSettings.name == "iPhone" && 
+                                            (iosSettings.maxTextureSize != defaultSettings.maxTextureSize ||
+                                             iosSettings.textureCompression != defaultSettings.textureCompression ||
+                                             iosSettings.compressionQuality != defaultSettings.compressionQuality ||
+                                             iosSettings.crunchedCompression != defaultSettings.crunchedCompression);
+                        }
                     }
-                    else
+                    catch
                     {
-                        // Fallback: check if settings differ from default
-                        var defaultSettings = textureImporter.GetDefaultPlatformTextureSettings();
-                        hasAndroidOverride = androidSettings.name == "Android" && 
-                                            (androidSettings.maxTextureSize != defaultSettings.maxTextureSize ||
-                                             androidSettings.textureCompression != defaultSettings.textureCompression ||
-                                             androidSettings.compressionQuality != defaultSettings.compressionQuality ||
-                                             androidSettings.crunchedCompression != defaultSettings.crunchedCompression);
-                    }
-                    
-                    if (iosOverridden.HasValue)
-                    {
-                        hasIOSOverride = iosOverridden.Value;
-                    }
-                    else
-                    {
-                        // Fallback: check if settings differ from default
-                        var defaultSettings = textureImporter.GetDefaultPlatformTextureSettings();
-                        hasIOSOverride = iosSettings.name == "iPhone" && 
-                                        (iosSettings.maxTextureSize != defaultSettings.maxTextureSize ||
-                                         iosSettings.textureCompression != defaultSettings.textureCompression ||
-                                         iosSettings.compressionQuality != defaultSettings.compressionQuality ||
-                                         iosSettings.crunchedCompression != defaultSettings.crunchedCompression);
+                        // If we can't check, assume no override
                     }
                 }
-                catch
+                // Check AudioImporter
+                else if (importer is AudioImporter audioImporter)
                 {
-                    // If we can't check, assume no override
+                    try
+                    {
+                        var androidSettings = audioImporter.GetOverrideSampleSettings("Android");
+                        var iosSettings = audioImporter.GetOverrideSampleSettings("iPhone");
+                        
+                        // Use reflection to check overridden field or property
+                        var androidOverridden = GetOverriddenValue(androidSettings);
+                        var iosOverridden = GetOverriddenValue(iosSettings);
+                        
+                        if (androidOverridden.HasValue)
+                        {
+                            hasAndroidOverride = androidOverridden.Value;
+                        }
+                        else
+                        {
+                            // Fallback: check if settings differ from default
+                            var defaultSettings = audioImporter.defaultSampleSettings;
+                            hasAndroidOverride = androidSettings.loadType != defaultSettings.loadType ||
+                                                androidSettings.compressionFormat != defaultSettings.compressionFormat ||
+                                                androidSettings.quality != defaultSettings.quality;
+                        }
+                        
+                        if (iosOverridden.HasValue)
+                        {
+                            hasIOSOverride = iosOverridden.Value;
+                        }
+                        else
+                        {
+                            // Fallback: check if settings differ from default
+                            var defaultSettings = audioImporter.defaultSampleSettings;
+                            hasIOSOverride = iosSettings.loadType != defaultSettings.loadType ||
+                                            iosSettings.compressionFormat != defaultSettings.compressionFormat ||
+                                            iosSettings.quality != defaultSettings.quality;
+                        }
+                    }
+                    catch
+                    {
+                        // If we can't check, assume no override
+                    }
                 }
-            }
-            // Check AudioImporter
-            else if (importer is AudioImporter audioImporter)
-            {
-                try
-                {
-                    var androidSettings = audioImporter.GetOverrideSampleSettings("Android");
-                    var iosSettings = audioImporter.GetOverrideSampleSettings("iPhone");
-                    
-                    // Use reflection to check overridden field or property
-                    var androidOverridden = GetOverriddenValue(androidSettings);
-                    var iosOverridden = GetOverriddenValue(iosSettings);
-                    
-                    if (androidOverridden.HasValue)
-                    {
-                        hasAndroidOverride = androidOverridden.Value;
-                    }
-                    else
-                    {
-                        // Fallback: check if settings differ from default
-                        var defaultSettings = audioImporter.defaultSampleSettings;
-                        hasAndroidOverride = androidSettings.loadType != defaultSettings.loadType ||
-                                            androidSettings.compressionFormat != defaultSettings.compressionFormat ||
-                                            androidSettings.quality != defaultSettings.quality;
-                    }
-                    
-                    if (iosOverridden.HasValue)
-                    {
-                        hasIOSOverride = iosOverridden.Value;
-                    }
-                    else
-                    {
-                        // Fallback: check if settings differ from default
-                        var defaultSettings = audioImporter.defaultSampleSettings;
-                        hasIOSOverride = iosSettings.loadType != defaultSettings.loadType ||
-                                        iosSettings.compressionFormat != defaultSettings.compressionFormat ||
-                                        iosSettings.quality != defaultSettings.quality;
-                    }
-                }
-                catch
-                {
-                    // If we can't check, assume no override
-                }
-            }
-            // Note: ModelImporter platform overrides are complex and don't have simple override flags
-            // like TextureImporter and AudioImporter. We skip ModelImporter for now.
-            // If you need to check ModelImporter overrides, you would need to check platform-specific
-            // import settings manually, which is beyond the scope of this tool.
+                // Note: ModelImporter platform overrides are complex and don't have simple override flags
+                // like TextureImporter and AudioImporter. We skip ModelImporter for now.
+                // If you need to check ModelImporter overrides, you would need to check platform-specific
+                // import settings manually, which is beyond the scope of this tool.
 
-            if (hasAndroidOverride || hasIOSOverride)
+                if (hasAndroidOverride || hasIOSOverride)
+                {
+                    foundAssetPaths.Add(path);
+                }
+            }
+
+            EditorUtility.ClearProgressBar();
+
+            // Show result dialog
+            if (foundAssetPaths.Count == 0)
             {
-                foundAssetPaths.Add(path);
+                EditorUtility.DisplayDialog("Search Complete", $"No assets with Android or iOS platform overrides found in:\n{folderPath}", "OK");
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("Search Complete", $"Found {foundAssetPaths.Count} asset(s) with platform overrides in:\n{folderPath}", "OK");
             }
         }
-
-        // Show result dialog
-        if (foundAssetPaths.Count == 0)
+        catch (Exception e)
         {
-            EditorUtility.DisplayDialog("Search Complete", $"No assets with Android or iOS platform overrides found in:\n{folderPath}", "OK");
+            EditorUtility.ClearProgressBar();
+            Debug.LogError($"Error during search: {e.Message}");
+            EditorUtility.DisplayDialog("Search Error", $"An error occurred during search:\n{e.Message}", "OK");
         }
-        else
+        finally
         {
-            EditorUtility.DisplayDialog("Search Complete", $"Found {foundAssetPaths.Count} asset(s) with platform overrides in:\n{folderPath}", "OK");
+            EditorUtility.ClearProgressBar();
         }
 
         Repaint();
