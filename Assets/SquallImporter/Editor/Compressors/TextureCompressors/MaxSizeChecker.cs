@@ -12,6 +12,10 @@ public class MaxSizeChecker : EditorWindow
     private readonly HashSet<string> selectedPaths = new HashSet<string>();
     private Vector2 scrollPosition;
     
+    // Virtual scrolling optimization
+    private const float ITEM_HEIGHT = 20f;
+    private const int VISIBLE_ITEM_COUNT = 50; // Number of items to render at once
+    
     private readonly int[] maxSizeOptions = { 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192 };
     private int selectedCheckMaxSizeIndex = 4; // Default to 512
     private int checkMaxSize = 512;
@@ -82,48 +86,78 @@ public class MaxSizeChecker : EditorWindow
                 }
             }
 
-            scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition, GUILayout.Height(220));
-            foreach (var path in foundTexturePaths)
+            // True virtual scrolling: only render visible items using GUI
+            float scrollViewHeight = 220f;
+            Rect scrollViewRect = GUILayoutUtility.GetRect(0, scrollViewHeight, GUILayout.ExpandWidth(true));
+            
+            // Calculate total content height
+            float totalContentHeight = foundTexturePaths.Count * ITEM_HEIGHT;
+            
+            // Begin scroll view
+            scrollPosition = GUI.BeginScrollView(scrollViewRect, scrollPosition, new Rect(0, 0, scrollViewRect.width - 20, totalContentHeight));
+            
+            if (foundTexturePaths.Count > 0)
             {
-                using (new EditorGUILayout.HorizontalScope())
+                // Calculate visible range
+                int startIndex = Mathf.Max(0, Mathf.FloorToInt(scrollPosition.y / ITEM_HEIGHT) - 5);
+                int endIndex = Mathf.Min(foundTexturePaths.Count, Mathf.CeilToInt((scrollPosition.y + scrollViewHeight) / ITEM_HEIGHT) + 5);
+                
+                // Draw only visible items
+                for (int i = startIndex; i < endIndex; i++)
                 {
-                    bool isSelected = selectedPaths.Contains(path);
-                    bool newSelected = EditorGUILayout.Toggle(isSelected, GUILayout.Width(20));
+                    var path = foundTexturePaths[i];
+                    float yPos = i * ITEM_HEIGHT;
                     
-                    if (newSelected != isSelected)
+                    // Only draw if in visible area
+                    if (yPos + ITEM_HEIGHT >= scrollPosition.y && yPos <= scrollPosition.y + scrollViewHeight)
                     {
-                        if (newSelected)
+                        Rect itemRect = new Rect(0, yPos, scrollViewRect.width - 20, ITEM_HEIGHT);
+                        
+                        // Toggle checkbox
+                        Rect toggleRect = new Rect(itemRect.x + 2, itemRect.y + 2, 20, ITEM_HEIGHT - 4);
+                        bool isSelected = selectedPaths.Contains(path);
+                        bool newSelected = GUI.Toggle(toggleRect, isSelected, "");
+                        
+                        if (newSelected != isSelected)
                         {
-                            selectedPaths.Add(path);
+                            if (newSelected)
+                            {
+                                selectedPaths.Add(path);
+                            }
+                            else
+                            {
+                                selectedPaths.Remove(path);
+                            }
                         }
-                        else
+                        
+                        // Path button
+                        Rect pathRect = new Rect(toggleRect.xMax + 5, itemRect.y, itemRect.width - toggleRect.width - 60, ITEM_HEIGHT);
+                        if (GUI.Button(pathRect, path, EditorStyles.linkLabel))
                         {
-                            selectedPaths.Remove(path);
+                            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
+                            if (asset != null)
+                            {
+                                Selection.activeObject = asset;
+                                EditorGUIUtility.PingObject(asset);
+                            }
                         }
-                    }
-
-                    if (GUILayout.Button(path, EditorStyles.linkLabel))
-                    {
-                        var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
-                        if (asset != null)
+                        
+                        // Ping button
+                        Rect pingRect = new Rect(itemRect.width - 50, itemRect.y, 50, ITEM_HEIGHT);
+                        if (GUI.Button(pingRect, "Ping"))
                         {
-                            Selection.activeObject = asset;
-                            EditorGUIUtility.PingObject(asset);
-                        }
-                    }
-                    GUILayout.FlexibleSpace();
-                    if (GUILayout.Button("Ping", GUILayout.Width(50)))
-                    {
-                        var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
-                        if (asset != null)
-                        {
-                            Selection.activeObject = asset;
-                            EditorGUIUtility.PingObject(asset);
+                            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
+                            if (asset != null)
+                            {
+                                Selection.activeObject = asset;
+                                EditorGUIUtility.PingObject(asset);
+                            }
                         }
                     }
                 }
             }
-            EditorGUILayout.EndScrollView();
+            
+            GUI.EndScrollView();
         }
 
         EditorGUILayout.Space(8);
