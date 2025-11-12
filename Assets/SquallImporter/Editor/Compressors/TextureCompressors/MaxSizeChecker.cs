@@ -12,6 +12,8 @@ public class MaxSizeChecker : EditorWindow
     private readonly HashSet<string> selectedPaths = new HashSet<string>();
     private readonly List<DefaultAsset> excludedFolders = new List<DefaultAsset>();
     private Vector2 scrollPosition;
+    private readonly string[] supportedPlatforms = { "Android", "iPhone", "Standalone", "WebGL", "tvOS", "PS4", "XboxOne", "Switch" };
+    private readonly Dictionary<string, bool> platformFilters = new Dictionary<string, bool>();
     
     // Virtual scrolling optimization
     private const float ITEM_HEIGHT = 20f;
@@ -36,6 +38,17 @@ public class MaxSizeChecker : EditorWindow
         window.titleContent = new GUIContent("Texture Max Size Checker");
         window.minSize = new Vector2(600, 450);
         window.Show();
+    }
+
+    private void OnEnable()
+    {
+        foreach (var platform in supportedPlatforms)
+        {
+            if (!platformFilters.ContainsKey(platform))
+            {
+                platformFilters[platform] = true;
+            }
+        }
     }
 
     private void OnGUI()
@@ -87,6 +100,19 @@ public class MaxSizeChecker : EditorWindow
                 {
                     excludedFolders.Add(null);
                 }
+            }
+        }
+
+        EditorGUILayout.Space(8);
+        EditorGUILayout.LabelField("Platform Filters", EditorStyles.boldLabel);
+        using (new EditorGUILayout.VerticalScope(GUI.skin.box))
+        {
+            EditorGUILayout.LabelField("Select override platforms to include when detecting large maxSize values.");
+            foreach (var platform in supportedPlatforms)
+            {
+                bool current = platformFilters.TryGetValue(platform, out var enabled) ? enabled : true;
+                bool updated = EditorGUILayout.ToggleLeft(platform, current);
+                platformFilters[platform] = updated;
             }
         }
 
@@ -298,15 +324,24 @@ public class MaxSizeChecker : EditorWindow
 
                 // Check all platform overrides
                 // We need to get all available platforms
-                var allPlatforms = new[] { "Android", "iPhone", "Standalone", "WebGL", "tvOS", "PS4", "XboxOne", "Switch" };
-                foreach (var platform in allPlatforms)
+                foreach (var platform in supportedPlatforms)
                 {
+                    if (!platformFilters.TryGetValue(platform, out var shouldCheck) || !shouldCheck)
+                    {
+                        continue;
+                    }
                     try
                     {
                         var platformSettings = importer.GetPlatformTextureSettings(platform);
                         if (platformSettings.name == platform)
                         {
-                            maxMaxSize = Math.Max(maxMaxSize, platformSettings.maxTextureSize);
+                            // Only consider when override is enabled
+                            var overridden = GetOverriddenValue(platformSettings);
+                            bool isOverridden = overridden.HasValue && overridden.Value;
+                            if (isOverridden)
+                            {
+                                maxMaxSize = Math.Max(maxMaxSize, platformSettings.maxTextureSize);
+                            }
                         }
                     }
                     catch
@@ -427,8 +462,7 @@ public class MaxSizeChecker : EditorWindow
                     }
 
                     // Set all platform overrides
-                    var allPlatforms = new[] { "Android", "iPhone", "Standalone", "WebGL", "tvOS", "PS4", "XboxOne", "Switch" };
-                    foreach (var platform in allPlatforms)
+                foreach (var platform in supportedPlatforms)
                     {
                         try
                         {
