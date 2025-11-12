@@ -8,7 +8,7 @@ using UnityEngine;
 public class MaxSizeChecker : EditorWindow
 {
     private DefaultAsset searchFolder = null;
-    private readonly List<string> foundTexturePaths = new List<string>();
+    private readonly List<TextureListItem> foundTextures = new List<TextureListItem>();
     private readonly HashSet<string> selectedPaths = new HashSet<string>();
     private Vector2 scrollPosition;
     
@@ -21,6 +21,12 @@ public class MaxSizeChecker : EditorWindow
     private int checkMaxSize = 512;
     private int selectedTargetMaxSizeIndex = 4; // Default to 512
     private int targetMaxSize = 512;
+    
+    private class TextureListItem
+    {
+        public string Path;
+        public int MaxDetectedSize;
+    }
 
     [MenuItem("Tools/SquallTools/Optimise/Texture Max Size Checker")]
     public static void ShowWindow()
@@ -67,7 +73,7 @@ public class MaxSizeChecker : EditorWindow
         EditorGUILayout.LabelField("Found Textures", EditorStyles.boldLabel);
         using (new EditorGUILayout.VerticalScope(GUI.skin.box))
         {
-            EditorGUILayout.LabelField($"Count: {foundTexturePaths.Count}");
+            EditorGUILayout.LabelField($"Count: {foundTextures.Count}");
             
             // Select All / Deselect All buttons
             using (new EditorGUILayout.HorizontalScope())
@@ -75,9 +81,9 @@ public class MaxSizeChecker : EditorWindow
                 if (GUILayout.Button("Select All", GUILayout.Width(100)))
                 {
                     selectedPaths.Clear();
-                    foreach (var path in foundTexturePaths)
+                    foreach (var item in foundTextures)
                     {
-                        selectedPaths.Add(path);
+                        selectedPaths.Add(item.Path);
                     }
                 }
                 if (GUILayout.Button("Deselect All", GUILayout.Width(100)))
@@ -91,21 +97,22 @@ public class MaxSizeChecker : EditorWindow
             Rect scrollViewRect = GUILayoutUtility.GetRect(0, scrollViewHeight, GUILayout.ExpandWidth(true));
             
             // Calculate total content height
-            float totalContentHeight = foundTexturePaths.Count * ITEM_HEIGHT;
+            float totalContentHeight = foundTextures.Count * ITEM_HEIGHT;
             
             // Begin scroll view
             scrollPosition = GUI.BeginScrollView(scrollViewRect, scrollPosition, new Rect(0, 0, scrollViewRect.width - 20, totalContentHeight));
             
-            if (foundTexturePaths.Count > 0)
+            if (foundTextures.Count > 0)
             {
                 // Calculate visible range
                 int startIndex = Mathf.Max(0, Mathf.FloorToInt(scrollPosition.y / ITEM_HEIGHT) - 5);
-                int endIndex = Mathf.Min(foundTexturePaths.Count, Mathf.CeilToInt((scrollPosition.y + scrollViewHeight) / ITEM_HEIGHT) + 5);
+                int endIndex = Mathf.Min(foundTextures.Count, Mathf.CeilToInt((scrollPosition.y + scrollViewHeight) / ITEM_HEIGHT) + 5);
                 
                 // Draw only visible items
                 for (int i = startIndex; i < endIndex; i++)
                 {
-                    var path = foundTexturePaths[i];
+                    var item = foundTextures[i];
+                    var path = item.Path;
                     float yPos = i * ITEM_HEIGHT;
                     
                     // Only draw if in visible area
@@ -131,7 +138,10 @@ public class MaxSizeChecker : EditorWindow
                         }
                         
                         // Path button
-                        Rect pathRect = new Rect(toggleRect.xMax + 5, itemRect.y, itemRect.width - toggleRect.width - 60, ITEM_HEIGHT);
+                        float pingWidth = 50f;
+                        float maxLabelWidth = 90f;
+                        float pathWidth = Mathf.Max(50f, itemRect.width - toggleRect.width - pingWidth - maxLabelWidth - 24f);
+                        Rect pathRect = new Rect(toggleRect.xMax + 5, itemRect.y, pathWidth, ITEM_HEIGHT);
                         if (GUI.Button(pathRect, path, EditorStyles.linkLabel))
                         {
                             var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
@@ -142,8 +152,11 @@ public class MaxSizeChecker : EditorWindow
                             }
                         }
                         
+                        Rect maxLabelRect = new Rect(pathRect.xMax + 5, itemRect.y, maxLabelWidth, ITEM_HEIGHT);
+                        GUI.Label(maxLabelRect, $"Max: {item.MaxDetectedSize}", EditorStyles.miniLabel);
+                        
                         // Ping button
-                        Rect pingRect = new Rect(itemRect.width - 50, itemRect.y, 50, ITEM_HEIGHT);
+                        Rect pingRect = new Rect(maxLabelRect.xMax + 5, itemRect.y, pingWidth, ITEM_HEIGHT);
                         if (GUI.Button(pingRect, "Ping"))
                         {
                             var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
@@ -173,7 +186,7 @@ public class MaxSizeChecker : EditorWindow
 
     private void FindTexturesWithLargeMaxSize()
     {
-        foundTexturePaths.Clear();
+        foundTextures.Clear();
         selectedPaths.Clear();
 
         var folderPath = searchFolder != null ? AssetDatabase.GetAssetPath(searchFolder) : "Assets";
@@ -234,19 +247,23 @@ public class MaxSizeChecker : EditorWindow
                 // If the maximum maxSize is greater than the threshold, add to list
                 if (maxMaxSize > checkMaxSize)
                 {
-                    foundTexturePaths.Add(path);
+                    foundTextures.Add(new TextureListItem
+                    {
+                        Path = path,
+                        MaxDetectedSize = maxMaxSize
+                    });
                 }
             }
 
             EditorUtility.ClearProgressBar();
 
-            if (foundTexturePaths.Count == 0)
+            if (foundTextures.Count == 0)
             {
                 EditorUtility.DisplayDialog("Search Complete", $"No textures with maxSize > {checkMaxSize} found in:\n{folderPath}", "OK");
             }
             else
             {
-                EditorUtility.DisplayDialog("Search Complete", $"Found {foundTexturePaths.Count} texture(s) with maxSize > {checkMaxSize} in:\n{folderPath}", "OK");
+                EditorUtility.DisplayDialog("Search Complete", $"Found {foundTextures.Count} texture(s) with maxSize > {checkMaxSize} in:\n{folderPath}", "OK");
             }
         }
         catch (Exception e)
