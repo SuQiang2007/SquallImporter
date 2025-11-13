@@ -9,8 +9,33 @@ using UnityEngine;
 public class DumplicatedChecker : EditorWindow
 {
     private DefaultAsset searchFolder;
+    private DefaultAsset referenceSearchFolder;
     private readonly List<DuplicateGroup> duplicateGroups = new List<DuplicateGroup>();
     private Vector2 scrollPosition;
+    private Vector2 fileTypeScrollPosition;
+    private readonly Dictionary<string, bool> fileTypeFilters = new Dictionary<string, bool>();
+    
+    private static readonly string[] CommonFileExtensions = new[]
+    {
+        ".prefab",
+        ".mat",
+        ".asset",
+        ".unity",
+        ".controller",
+        ".anim",
+        ".cs",
+        ".shader",
+        ".compute",
+        ".hlsl",
+        ".cginc",
+        ".cg",
+        ".glslinc",
+        ".json",
+        ".txt",
+        ".xml",
+        ".yaml",
+        ".yml"
+    };
 
     private class DuplicateGroup
     {
@@ -25,6 +50,19 @@ public class DumplicatedChecker : EditorWindow
         window.titleContent = new GUIContent("Duplicated Checker");
         window.minSize = new Vector2(540, 360);
         window.Show();
+    }
+
+    private void OnEnable()
+    {
+        // Initialize file type filters with default selections
+        if (fileTypeFilters.Count == 0)
+        {
+            // Default: enable common Unity resource file types
+            foreach (var ext in CommonFileExtensions)
+            {
+                fileTypeFilters[ext] = true;
+            }
+        }
     }
 
     private void OnGUI()
@@ -44,6 +82,78 @@ public class DumplicatedChecker : EditorWindow
             }
         }
 
+        EditorGUILayout.Space(4);
+        EditorGUILayout.LabelField("Batch Replace Settings", EditorStyles.boldLabel);
+        referenceSearchFolder = (DefaultAsset)EditorGUILayout.ObjectField("Reference Search Range", referenceSearchFolder, typeof(DefaultAsset), false);
+        if (referenceSearchFolder == null)
+        {
+            EditorGUILayout.HelpBox("If not set, will search entire project. Set a folder to limit reference search scope for better performance.", MessageType.Info);
+        }
+        else
+        {
+            var refPath = AssetDatabase.GetAssetPath(referenceSearchFolder);
+            if (!string.IsNullOrEmpty(refPath) && !AssetDatabase.IsValidFolder(refPath))
+            {
+                EditorGUILayout.HelpBox("Please select a valid folder.", MessageType.Warning);
+            }
+        }
+
+        EditorGUILayout.Space(4);
+        EditorGUILayout.LabelField("File Type Filters", EditorStyles.boldLabel);
+        int enabledCount = fileTypeFilters.Values.Count(v => v);
+        EditorGUILayout.HelpBox($"Select file types to scan for texture references. Only checked file types will be processed during batch replace. ({enabledCount}/{CommonFileExtensions.Length} enabled)", MessageType.Info);
+        
+        using (new EditorGUILayout.VerticalScope(GUI.skin.box))
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button("Select All", GUILayout.Width(100)))
+                {
+                    foreach (var ext in CommonFileExtensions)
+                    {
+                        fileTypeFilters[ext] = true;
+                    }
+                }
+                if (GUILayout.Button("Deselect All", GUILayout.Width(100)))
+                {
+                    foreach (var ext in CommonFileExtensions)
+                    {
+                        fileTypeFilters[ext] = false;
+                    }
+                }
+                GUILayout.FlexibleSpace();
+            }
+
+            fileTypeScrollPosition = EditorGUILayout.BeginScrollView(fileTypeScrollPosition, GUILayout.Height(120));
+            int columns = 3;
+            int rowCount = (CommonFileExtensions.Length + columns - 1) / columns;
+            
+            for (int row = 0; row < rowCount; row++)
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    for (int col = 0; col < columns; col++)
+                    {
+                        int index = row * columns + col;
+                        if (index < CommonFileExtensions.Length)
+                        {
+                            var ext = CommonFileExtensions[index];
+                            if (!fileTypeFilters.ContainsKey(ext))
+                            {
+                                fileTypeFilters[ext] = false;
+                            }
+                            fileTypeFilters[ext] = EditorGUILayout.ToggleLeft(ext, fileTypeFilters[ext], GUILayout.Width(120));
+                        }
+                        else
+                        {
+                            GUILayout.FlexibleSpace();
+                        }
+                    }
+                }
+            }
+            EditorGUILayout.EndScrollView();
+        }
+
         EditorGUILayout.Space(8);
         EditorGUILayout.LabelField("Duplicated Textures", EditorStyles.boldLabel);
         using (new EditorGUILayout.VerticalScope(GUI.skin.box))
@@ -51,43 +161,62 @@ public class DumplicatedChecker : EditorWindow
             int duplicateCount = duplicateGroups.Sum(g => Mathf.Max(0, g.Paths.Count - 1));
             EditorGUILayout.LabelField($"Groups: {duplicateGroups.Count}   Duplicates: {duplicateCount}");
 
-            scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition, GUILayout.Height(260));
-            if (duplicateGroups.Count == 0)
+            const float ROW_HEIGHT = 22f;
+            const int PRELOAD_ROWS = 10;
+            float scrollViewHeight = 260f;
+            Rect scrollViewRect = GUILayoutUtility.GetRect(0, scrollViewHeight, GUILayout.ExpandWidth(true));
+            scrollViewRect.height = scrollViewHeight;
+
+            var rows = BuildDisplayRows();
+            float totalContentHeight = Mathf.Max(rows.Count * ROW_HEIGHT, scrollViewHeight);
+            Rect contentRect = new Rect(0, 0, scrollViewRect.width - 20f, totalContentHeight);
+
+            scrollPosition = GUI.BeginScrollView(scrollViewRect, scrollPosition, contentRect);
+
+            if (rows.Count == 0)
             {
-                GUILayout.Label("No duplicated textures found.", EditorStyles.centeredGreyMiniLabel);
+                var emptyRect = new Rect(0, 0, contentRect.width, ROW_HEIGHT);
+                GUI.Label(emptyRect, "No duplicated textures found.", EditorStyles.centeredGreyMiniLabel);
             }
             else
             {
-                for (int i = 0; i < duplicateGroups.Count; i++)
+                int startIndex = Mathf.Max(0, Mathf.FloorToInt(scrollPosition.y / ROW_HEIGHT) - PRELOAD_ROWS);
+                int endIndex = Mathf.Min(rows.Count, Mathf.CeilToInt((scrollPosition.y + scrollViewHeight) / ROW_HEIGHT) + PRELOAD_ROWS);
+
+                for (int rowIndex = startIndex; rowIndex < endIndex; rowIndex++)
                 {
-                    var group = duplicateGroups[i];
-                    EditorGUILayout.LabelField($"Group {i + 1} (Count: {group.Paths.Count})", EditorStyles.boldLabel);
-                    using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+                    var row = rows[rowIndex];
+                    float yPos = rowIndex * ROW_HEIGHT;
+                    Rect rowRect = new Rect(0, yPos, contentRect.width, ROW_HEIGHT);
+
+                    if (row.IsHeader)
                     {
-                        int groupId = i + 1;
-                        foreach (var path in group.Paths)
+                        GUI.Label(rowRect, $"Group {row.GroupId} (Count: {row.GroupCount})", EditorStyles.boldLabel);
+                    }
+                    else
+                    {
+                        float idWidth = 40f;
+                        float pingWidth = 60f;
+                        Rect idRect = new Rect(rowRect.x, rowRect.y, idWidth, ROW_HEIGHT);
+                        Rect pingRect = new Rect(rowRect.xMax - pingWidth, rowRect.y, pingWidth, ROW_HEIGHT);
+                        Rect pathRect = new Rect(idRect.xMax + 4f, rowRect.y, rowRect.width - idWidth - pingWidth - 8f, ROW_HEIGHT);
+
+                        GUI.Label(idRect, $"#{row.GroupId}", EditorStyles.miniLabel);
+
+                        if (GUI.Button(pathRect, row.Path, EditorStyles.linkLabel))
                         {
-                            using (new EditorGUILayout.HorizontalScope())
-                            {
-                                GUILayout.Label($"#{groupId}", GUILayout.Width(40));
+                            PingAsset(row.Path);
+                        }
 
-                                if (GUILayout.Button(path, EditorStyles.linkLabel))
-                                {
-                                    PingAsset(path);
-                                }
-
-                                GUILayout.FlexibleSpace();
-
-                                if (GUILayout.Button("Ping", GUILayout.Width(60)))
-                                {
-                                    PingAsset(path);
-                                }
-                            }
+                        if (GUI.Button(pingRect, "Ping"))
+                        {
+                            PingAsset(row.Path);
                         }
                     }
                 }
             }
-            EditorGUILayout.EndScrollView();
+
+            GUI.EndScrollView();
         }
 
         EditorGUILayout.Space(8);
@@ -200,6 +329,50 @@ public class DumplicatedChecker : EditorWindow
         Repaint();
     }
 
+    private struct DisplayRow
+    {
+        public bool IsHeader;
+        public int GroupId;
+        public int GroupCount;
+        public string Path;
+    }
+
+    private List<DisplayRow> BuildDisplayRows()
+    {
+        var rows = new List<DisplayRow>();
+        for (int i = 0; i < duplicateGroups.Count; i++)
+        {
+            var group = duplicateGroups[i];
+            int groupId = i + 1;
+
+            rows.Add(new DisplayRow
+            {
+                IsHeader = true,
+                GroupId = groupId,
+                GroupCount = group.Paths?.Count ?? 0,
+                Path = string.Empty
+            });
+
+            if (group.Paths == null)
+            {
+                continue;
+            }
+
+            foreach (var path in group.Paths)
+            {
+                rows.Add(new DisplayRow
+                {
+                    IsHeader = false,
+                    GroupId = groupId,
+                    GroupCount = group.Paths.Count,
+                    Path = path
+                });
+            }
+        }
+
+        return rows;
+    }
+
     private void BatchReplaceDuplicates()
     {
         var groupsToProcess = duplicateGroups.Where(g => g.Paths != null && g.Paths.Count > 1).ToList();
@@ -222,17 +395,36 @@ public class DumplicatedChecker : EditorWindow
         }
 
         string projectRoot = GetProjectRoot();
-        var allAssetPaths = CollectAllAssetPaths();
+        
+        // Determine reference search path
+        string referenceSearchPath = null;
+        if (referenceSearchFolder != null)
+        {
+            referenceSearchPath = AssetDatabase.GetAssetPath(referenceSearchFolder);
+            if (string.IsNullOrEmpty(referenceSearchPath) || !AssetDatabase.IsValidFolder(referenceSearchPath))
+            {
+                EditorUtility.DisplayDialog("Invalid Reference Search Folder", "Please select a valid folder for reference search range, or leave it empty to search entire project.", "OK");
+                return;
+            }
+        }
+        
+        var allAssetPaths = CollectAllAssetPaths(referenceSearchPath);
 
-        int processedDuplicates = 0;
         int replacedReferences = 0;
         int deletedTextures = 0;
         int errors = 0;
 
         try
         {
-            AssetDatabase.StartAssetEditing();
+            // Step 1: Build reference index (scan all assets once)
+            string searchScope = referenceSearchPath ?? "entire project";
+            EditorUtility.DisplayProgressBar("Building Reference Index", $"Scanning assets in {searchScope}...", 0f);
+            var guidToReferencingAssets = BuildReferenceIndex(allAssetPaths, groupsToProcess, projectRoot);
 
+            // Step 2: Collect all GUID replacements
+            var guidReplacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var assetsToModify = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            
             foreach (var group in groupsToProcess)
             {
                 string primaryPath = group.Paths[0];
@@ -242,34 +434,54 @@ public class DumplicatedChecker : EditorWindow
                 {
                     string duplicatePath = group.Paths[i];
                     string duplicateGuid = AssetDatabase.AssetPathToGUID(duplicatePath);
+                    guidReplacements[duplicateGuid] = primaryGuid;
 
-                    float baseProgress = duplicateCount == 0 ? 1f : (float)processedDuplicates / duplicateCount;
-                    EditorUtility.DisplayProgressBar("Processing Duplicate Textures", $"Processing {duplicatePath}", Mathf.Clamp01(baseProgress));
-
-                    var referencingAssets = FindAssetsReferencingGuid(allAssetPaths, duplicateGuid, duplicatePath, primaryPath, projectRoot);
-
-                    for (int r = 0; r < referencingAssets.Count; r++)
+                    if (guidToReferencingAssets.TryGetValue(duplicateGuid, out var referencingAssets))
                     {
-                        var assetPath = referencingAssets[r];
-                        float progress = duplicateCount == 0 ? 1f : (processedDuplicates + (float)r / Math.Max(1, referencingAssets.Count)) / duplicateCount;
-                        EditorUtility.DisplayProgressBar("Processing Duplicate Textures", $"Updating references in {assetPath}", Mathf.Clamp01(progress));
-
-                        if (TryReplaceGuidInAsset(projectRoot, assetPath, duplicateGuid, primaryGuid, out bool changed))
+                        foreach (var assetPath in referencingAssets)
                         {
-                            if (changed)
-                            {
-                                replacedReferences++;
-                                AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
-                            }
-                        }
-                        else
-                        {
-                            errors++;
+                            assetsToModify.Add(assetPath);
                         }
                     }
+                }
+            }
 
+            // Step 3: Batch replace GUIDs in all affected files
+            AssetDatabase.StartAssetEditing();
+            
+            int totalAssetsToModify = assetsToModify.Count;
+            int processedAssets = 0;
+
+            foreach (var assetPath in assetsToModify)
+            {
+                processedAssets++;
+                float progress = totalAssetsToModify == 0 ? 1f : (float)processedAssets / totalAssetsToModify;
+                EditorUtility.DisplayProgressBar("Updating References", $"Processing {assetPath} ({processedAssets}/{totalAssetsToModify})", progress);
+
+                if (TryBatchReplaceGuidsInAsset(projectRoot, assetPath, guidReplacements, out int replacements))
+                {
+                    if (replacements > 0)
+                    {
+                        replacedReferences += replacements;
+                        AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
+                    }
+                }
+                else
+                {
+                    errors++;
+                }
+            }
+
+            // Step 4: Delete duplicate textures
+            int processedDuplicates = 0;
+            foreach (var group in groupsToProcess)
+            {
+                for (int i = 1; i < group.Paths.Count; i++)
+                {
+                    string duplicatePath = group.Paths[i];
                     processedDuplicates++;
-                    EditorUtility.DisplayProgressBar("Processing Duplicate Textures", $"Deleting {duplicatePath}", Mathf.Clamp01(duplicateCount == 0 ? 1f : (float)processedDuplicates / duplicateCount));
+                    float progress = duplicateCount == 0 ? 1f : (float)processedDuplicates / duplicateCount;
+                    EditorUtility.DisplayProgressBar("Deleting Duplicates", $"Deleting {duplicatePath} ({processedDuplicates}/{duplicateCount})", progress);
 
                     if (AssetDatabase.DeleteAsset(duplicatePath))
                     {
@@ -309,9 +521,15 @@ public class DumplicatedChecker : EditorWindow
         return Application.dataPath.Substring(0, Application.dataPath.Length - "Assets".Length);
     }
 
-    private List<string> CollectAllAssetPaths()
+    private List<string> CollectAllAssetPaths(string searchPath = null)
     {
-        var guids = AssetDatabase.FindAssets(string.Empty);
+        string[] searchPaths = null;
+        if (!string.IsNullOrEmpty(searchPath))
+        {
+            searchPaths = new[] { searchPath };
+        }
+
+        var guids = AssetDatabase.FindAssets(string.Empty, searchPaths);
         var assetPaths = new List<string>(guids.Length);
 
         foreach (var guid in guids)
@@ -332,10 +550,130 @@ public class DumplicatedChecker : EditorWindow
                 continue;
             }
 
+            // If searchPath is specified, ensure the path is within that folder
+            if (!string.IsNullOrEmpty(searchPath))
+            {
+                string normalizedSearchPath = searchPath.Replace("\\", "/").TrimEnd('/');
+                string normalizedPath = path.Replace("\\", "/");
+                
+                if (!normalizedPath.Equals(normalizedSearchPath, StringComparison.OrdinalIgnoreCase) &&
+                    !normalizedPath.StartsWith(normalizedSearchPath + "/", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+            }
+
+            // Filter by file type
+            if (!IsFileTypeEnabled(path))
+            {
+                continue;
+            }
+
             assetPaths.Add(path);
         }
 
         return assetPaths;
+    }
+
+    private bool IsFileTypeEnabled(string assetPath)
+    {
+        string extension = Path.GetExtension(assetPath).ToLowerInvariant();
+        if (string.IsNullOrEmpty(extension))
+        {
+            // Files without extension are not processed
+            return false;
+        }
+
+        // Check if this extension is in our filter list
+        if (fileTypeFilters.TryGetValue(extension, out bool enabled))
+        {
+            return enabled;
+        }
+
+        // If extension is not in the filter list, don't process it
+        // This ensures only explicitly selected file types are processed
+        return false;
+    }
+
+    private Dictionary<string, List<string>> BuildReferenceIndex(List<string> allAssetPaths, List<DuplicateGroup> groupsToProcess, string projectRoot)
+    {
+        var guidToReferencingAssets = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        
+        // Collect all duplicate GUIDs we need to track
+        var duplicateGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var duplicatePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        
+        foreach (var group in groupsToProcess)
+        {
+            for (int i = 1; i < group.Paths.Count; i++)
+            {
+                string duplicatePath = group.Paths[i];
+                string duplicateGuid = AssetDatabase.AssetPathToGUID(duplicatePath);
+                duplicateGuids.Add(duplicateGuid);
+                duplicatePaths.Add(duplicatePath);
+            }
+        }
+
+        if (duplicateGuids.Count == 0)
+        {
+            return guidToReferencingAssets;
+        }
+
+        // Scan all assets once
+        int totalAssets = allAssetPaths.Count;
+        int processedAssets = 0;
+
+        foreach (var assetPath in allAssetPaths)
+        {
+            processedAssets++;
+            
+            // Skip duplicate textures themselves
+            if (duplicatePaths.Contains(assetPath))
+            {
+                continue;
+            }
+
+            float progress = totalAssets == 0 ? 1f : (float)processedAssets / totalAssets;
+            EditorUtility.DisplayProgressBar("Building Reference Index", $"Scanning {assetPath} ({processedAssets}/{totalAssets})", progress);
+
+            var fullPath = GetFullPath(projectRoot, assetPath);
+            if (!File.Exists(fullPath))
+            {
+                continue;
+            }
+
+            if (IsBinaryFile(fullPath))
+            {
+                continue;
+            }
+
+            string text;
+            try
+            {
+                text = File.ReadAllText(fullPath);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"DumplicatedChecker: Unable to read {assetPath}. {e.Message}");
+                continue;
+            }
+
+            // Check which duplicate GUIDs are referenced in this file
+            foreach (var duplicateGuid in duplicateGuids)
+            {
+                if (text.IndexOf(duplicateGuid, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    if (!guidToReferencingAssets.TryGetValue(duplicateGuid, out var list))
+                    {
+                        list = new List<string>();
+                        guidToReferencingAssets[duplicateGuid] = list;
+                    }
+                    list.Add(assetPath);
+                }
+            }
+        }
+
+        return guidToReferencingAssets;
     }
 
     private List<string> FindAssetsReferencingGuid(List<string> allAssetPaths, string targetGuid, string duplicatePath, string primaryPath, string projectRoot)
@@ -379,6 +717,55 @@ public class DumplicatedChecker : EditorWindow
         }
 
         return results;
+    }
+
+    private bool TryBatchReplaceGuidsInAsset(string projectRoot, string assetPath, Dictionary<string, string> guidReplacements, out int replacementCount)
+    {
+        replacementCount = 0;
+        var fullPath = GetFullPath(projectRoot, assetPath);
+
+        if (!File.Exists(fullPath))
+        {
+            return false;
+        }
+
+        if (IsBinaryFile(fullPath))
+        {
+            return true;
+        }
+
+        try
+        {
+            var text = File.ReadAllText(fullPath);
+            var updatedText = text;
+            bool changed = false;
+
+            // Replace all GUIDs in one pass
+            foreach (var kvp in guidReplacements)
+            {
+                string oldGuid = kvp.Key;
+                string newGuid = kvp.Value;
+
+                if (updatedText.IndexOf(oldGuid, StringComparison.Ordinal) >= 0)
+                {
+                    updatedText = updatedText.Replace(oldGuid, newGuid);
+                    changed = true;
+                    replacementCount++;
+                }
+            }
+
+            if (changed)
+            {
+                File.WriteAllText(fullPath, updatedText);
+            }
+
+            return true;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"DumplicatedChecker: Failed to update {assetPath}. {e.Message}");
+            return false;
+        }
     }
 
     private bool TryReplaceGuidInAsset(string projectRoot, string assetPath, string oldGuid, string newGuid, out bool changed)
