@@ -252,13 +252,27 @@ public class FolderDeleter : EditorWindow
 			return;
 		}
 
-		if (!EditorUtility.DisplayDialog("Confirm Deletion", $"This will delete {selectedParents.Count} folder(s). Continue?", "Yes", "No"))
+		// Prepare required names
+		var names = requiredFolderNames
+			.Select(n => (n ?? string.Empty).Trim())
+			.Where(n => !string.IsNullOrEmpty(n))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToList();
+
+		if (names.Count == 0)
+		{
+			EditorUtility.DisplayDialog("No Names", "Please add at least one folder name to delete under selected parents.", "OK");
+			return;
+		}
+
+		int targetCount = selectedParents.Count * names.Count;
+		if (!EditorUtility.DisplayDialog("Confirm Deletion", $"This will delete up to {targetCount} subfolder(s) named [{string.Join(", ", names)}] under {selectedParents.Count} selected parent folder(s). Continue?", "Yes", "No"))
 		{
 			return;
 		}
 
-		var toDelete = matchedParentFolders.Where(p => selectedParents.Contains(p)).ToList();
-		int total = toDelete.Count;
+		var parentsToProcess = matchedParentFolders.Where(p => selectedParents.Contains(p)).ToList();
+		int totalOps = Math.Max(1, parentsToProcess.Count * names.Count);
 		int deleted = 0;
 		int errors = 0;
 
@@ -266,34 +280,39 @@ public class FolderDeleter : EditorWindow
 		{
 			AssetDatabase.StartAssetEditing();
 
-			for (int i = 0; i < toDelete.Count; i++)
+			int opIndex = 0;
+			for (int i = 0; i < parentsToProcess.Count; i++)
 			{
-				var path = toDelete[i];
-				EditorUtility.DisplayProgressBar("Deleting Folders", path, (float)(i + 1) / total);
-
-				try
+				var parentPath = parentsToProcess[i];
+				foreach (var name in names)
 				{
-					// Ensure path is a folder
-					if (!AssetDatabase.IsValidFolder(path))
-					{
-						Debug.LogWarning($"FolderDeleter: Not a folder: {path}");
-						continue;
-					}
+					opIndex++;
+					var subPath = parentPath.TrimEnd('/') + "/" + name;
+					EditorUtility.DisplayProgressBar("Deleting Subfolders", subPath, (float)opIndex / totalOps);
 
-					if (AssetDatabase.DeleteAsset(path))
+					try
 					{
-						deleted++;
+						// Ensure subPath is a folder
+						if (!AssetDatabase.IsValidFolder(subPath))
+						{
+							continue;
+						}
+
+						if (AssetDatabase.DeleteAsset(subPath))
+						{
+							deleted++;
+						}
+						else
+						{
+							Debug.LogError($"FolderDeleter: Failed to delete {subPath}");
+							errors++;
+						}
 					}
-					else
+					catch (Exception e)
 					{
-						Debug.LogError($"FolderDeleter: Failed to delete {path}");
+						Debug.LogError($"FolderDeleter: Error deleting {subPath}: {e.Message}");
 						errors++;
 					}
-				}
-				catch (Exception e)
-				{
-					Debug.LogError($"FolderDeleter: Error deleting {path}: {e.Message}");
-					errors++;
 				}
 			}
 		}
@@ -309,7 +328,7 @@ public class FolderDeleter : EditorWindow
 			EditorUtility.ClearProgressBar();
 		}
 
-		EditorUtility.DisplayDialog("Delete Complete", $"Deleted: {deleted}\nErrors: {errors}", "OK");
+		EditorUtility.DisplayDialog("Delete Complete", $"Deleted subfolders: {deleted}\nErrors: {errors}", "OK");
 
 		// Refresh list
 		SearchMatchingParents();
